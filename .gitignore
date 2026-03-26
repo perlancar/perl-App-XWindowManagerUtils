@@ -1,0 +1,5 @@
+App-XWindowManagerUtils-*
+.build
+*~
+nytprof*
+.DS_Store
