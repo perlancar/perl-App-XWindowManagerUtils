@@ -49,13 +49,30 @@ sub list_xwm_windows {
     system({capture_stdout => \my $stdout}, "wmctrl", "-lpG");
     return [500, "Can't run wmctrl"] if $?;
 
+    my @positive_query;
+    my @negative_query;
+  BUILD_QUERY: {
+        for my $query (@{ $args{query} // [] }) {
+            if ($query =~ /\A-(.*)/) {
+                my $q = $1;
+                push @negative_query, sub { $_[0] =~ /\Q$q\E/i ? 1 : 0 };
+            } elsif ($query =~ m!\A/(.*)/\z!) {
+                my $re = $1;
+                push @positive_query, sub { $_[0] =~ /$re/i ? 1 : 0 };
+            } else {
+                push @positive_query, sub { $_[0] =~ /\Q$query\E/i ? 1 : 0 };
+            }
+        }
+    } # BUILD_QUERY
+
+  LINE:
     for my $line (split /^/m, $stdout) {
         my ($id, $desktop, $pid,
             $x, $y, $width, $height,
-            $host, $title) = /^(\S+)\s+(\S+)\s+(\d+)\s+
-                                 (\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+
-                                 (\S+)\s+(.*)/x;
-        push @rows, {
+            $host, $title) = $line =~ /^(\S+)\s+(\S+)\s+(\d+)\s+
+                                       (\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+
+                                       (\S+)\s+(.*)/x;
+        my $row = {
             id => $id,
             desktop => $desktop,
             pid => $pid,
@@ -66,7 +83,42 @@ sub list_xwm_windows {
             host => $host,
             title => $title,
         };
-    }
+
+      FILTER: {
+          NEGATIVE_QUERY: {
+                last unless @negative_query;
+                my $match = 1;
+                for my $query (@negative_query) {
+                    if ($query->($row->{title})) {
+                        $match = 0; goto L1;
+                    }
+                }
+              L1:
+                unless ($match) {
+                    log_trace "Skipping window id=%s title=<%s>: matches negative query in %s", $row->{id}, $row->{title}, $args{query};
+                    next LINE;
+                }
+            }
+
+          POSITIVE_QUERY: {
+                last unless @positive_query;
+                my $match = 1;
+                for my $query (@positive_query) {
+                    if (!$query->($row->{title})) {
+                        $match = 0; goto L1;
+                    }
+                }
+
+              L1:
+                unless ($match) {
+                    log_trace "Skipping window id=%s title=<%s>: does not match all positive query in %s", $row->{id}, $row->{title}, $args{query};
+                    next LINE;
+                }
+            } # QUERY
+        } # FILTER
+
+        push @rows, $row;
+    } # for line
 
     unless ($args{detail}) {
         @rows = map { $_->{id} } @rows;
