@@ -37,6 +37,9 @@ $SPEC{list_xwm_windows} = {
             schema => 'bool*',
             cmdline_aliases => {l=>{}},
         },
+        with_kde_activity => {
+            schema => 'bool*',
+        },
     },
     deps => {
         prog => 'wmctrl',
@@ -44,6 +47,10 @@ $SPEC{list_xwm_windows} = {
 };
 sub list_xwm_windows {
     my %args = @_;
+
+    my $with_kde_activity = $args{with_kde_activity};
+    my $detail = $args{detail};
+    $detail //=1 if $with_kde_activity;
 
     my @rows;
     system({capture_stdout => \my $stdout}, "wmctrl", "-lpG");
@@ -117,6 +124,16 @@ sub list_xwm_windows {
             } # QUERY
         } # FILTER
 
+      GET_KDE_ACTIVITY: {
+            last unless $with_kde_activity;
+            my $res_get_act = get_xwm_window_kde_activity(id => $row->{id});
+            if ($res_get_act->[0] != 200) {
+                log_warn "Can't get KDE activity for window id %s: %d - %s", $row->{id}, $res_get_act->[0], $res_get_act->[1];
+                last;
+            }
+            $row->{kde_activity} = $res_get_act->[2];
+        }
+
         push @rows, $row;
     } # for line
 
@@ -125,6 +142,51 @@ sub list_xwm_windows {
     }
 
     [200, "OK", \@rows];
+}
+
+$SPEC{get_xwm_window_kde_activity} = {
+    v => 1.1,
+    summary => "Get the KDE activity GUID(s) of a specific window",
+    description => <<'MARKDOWN',
+
+A window can be displayed in more than one KDE activities, so this utility can
+return a comma-separated list of GUIDs.
+
+MARKDOWN
+    args => {
+        id => {
+            summary => 'Window ID, specified in hex form with 0x prefix, e.g. 0x05a0000e',
+            schema => ['str*'],
+            req => 1,
+            pos => 0,
+        },
+    },
+    deps => {
+        all => [
+            {prog => 'wmctrl'},
+            {prog => 'xprop'},
+        ],
+    },
+};
+sub get_xwm_window_kde_activity {
+    my %args = @_;
+
+    my $id = $args{id} or return [400, "Please specify id"];
+
+    system({capture_stdout => \my $stdout, capture_stderr => \my $stderr},
+           "xprop", "-id", $id, "_KDE_NET_WM_ACTIVITIES");
+    if ($?) {
+        if ($stderr =~ /BadWindow.*invalid Window parameter/) {
+            return [404, "No such window ID"];
+        } else {
+            return [500, "Can't successfully run xprop"];
+        }
+    } else {
+        # sample output: _KDE_NET_WM_ACTIVITIES(STRING) = "40eabb80-2103-48af-8977-23b6e06fbcc3"
+        my ($guid) = $stdout =~ /^_KDE_NET_WM_ACTIVITIES.+"([^"]+)"/;
+
+        return [200, "OK", $guid];
+    }
 }
 
 1;
