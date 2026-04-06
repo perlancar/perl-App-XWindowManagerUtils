@@ -27,6 +27,11 @@ $SPEC{':package'} = {
 $SPEC{list_xwm_windows} = {
     v => 1.1,
     summary => "List all Windows",
+    description => <<'MARKDOWN',
+
+This utility is currently a wrapper for <prog:wmctrl>.
+
+MARKDOWN
     args => {
         query => {
             schema => ['array*', of=>'str*'],
@@ -196,9 +201,17 @@ sub get_xwm_window_kde_activity {
 
 =head1 DESCRIPTION
 
-This distribution includes several utilities related to X Window Manager:
+This distribution includes several utilities related to "X Window Manager":
 
 #INSERT_EXECS_LIST
+
+Under the hood, it's currently a wrapper to tools like C<wmctrl>, etc.
+
+C<wmctrl> works on EWMH-compliant X11 window managers. This means mainstream
+desktop environments like KWin, Xfwm, Mutter (GNOME). It works partially or
+doesn't work with minimalist window managers like dwm, suckless. It partially
+works with Wayland where there is an X compatibility layer, e.g. GNOME Wayland,
+KDE Plasma Wayland.
 
 
 =head1 SEE ALSO
