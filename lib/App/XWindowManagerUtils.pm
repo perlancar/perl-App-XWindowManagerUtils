@@ -37,13 +37,30 @@ MARKDOWN
             schema => ['array*', of=>'str*'],
             pos => 0,
             slurpy => 1,
+            description => <<'MARKDOWN',
+
+Queries are matched against window titles, IDs, and KDE activity names & GUIDs
+(if KDE activity names & GUIDs are requested).
+
+MARKDOWN
+            tags => ['category:filtering'],
         },
         detail => {
             schema => 'bool*',
             cmdline_aliases => {l=>{}},
         },
         with_kde_activity => {
+            summary => 'Show KDE activity GUID for each window (old name for with_kde_activity_guid)',
             schema => 'bool*',
+        },
+        with_kde_activity_guid => {
+            summary => 'Show KDE activity GUID for each window',
+            schema => 'bool*',
+        },
+        with_kde_activity_name => {
+            summary => 'Show KDE activity name for each window',
+            schema => 'bool*',
+            cmdline_aliases => {k=>{}},
         },
     },
     deps => {
@@ -53,7 +70,10 @@ MARKDOWN
 sub list_xwm_windows {
     my %args = @_;
 
-    my $with_kde_activity = $args{with_kde_activity};
+    my $with_kde_activity =
+        $args{with_kde_activity} ||
+        $args{with_kde_activity_guid} ||
+        $args{with_kde_activity_name};
     my $detail = $args{detail};
     $detail //=1 if $with_kde_activity;
 
@@ -77,6 +97,14 @@ sub list_xwm_windows {
         }
     } # BUILD_QUERY
 
+    my $res_list_kact;
+    if ($with_kde_activity) {
+        require Desktop::KDEActivity::Util;
+        $res_list_kact = Desktop::KDEActivity::Util::list_kde_activities(detail=>1);
+        return [500, "Can't list KDE activities: $res_list_kact->[0] - $res_list_kact->[1]"]
+            unless $res_list_kact->[0] == 200;
+    }
+
   LINE:
     for my $line (split /^/m, $stdout) {
         my ($id, $desktop, $pid,
@@ -95,6 +123,27 @@ sub list_xwm_windows {
             host => $host,
             title => $title,
         };
+
+      GET_KDE_ACTIVITY: {
+            last unless $with_kde_activity;
+            my $res_get_act = get_xwm_window_kde_activity(id => $row->{id});
+            if ($res_get_act->[0] != 200) {
+                log_warn "Can't get KDE activity for window id %s: %d - %s", $row->{id}, $res_get_act->[0], $res_get_act->[1];
+                last;
+            }
+            my $guid = $res_get_act->[2];
+            my $name;
+            if ($args{with_kde_activity_name}) {
+                for my $row (@{ $res_list_kact->[2] }) {
+                    if ($guid && $row->{guid} eq $guid) {
+                        $name = $row->{name};
+                        last;
+                    }
+                }
+            }
+            $row->{kde_activity_guid} = $guid if $args{with_kde_activity} || $args{with_kde_activity_guid};
+            $row->{kde_activity_name} = $name if $args{with_kde_activity_name};
+        }
 
       FILTER: {
           NEGATIVE_QUERY: {
@@ -116,7 +165,9 @@ sub list_xwm_windows {
                 last unless @positive_query;
                 my $match = 1;
                 for my $query (@positive_query) {
-                    if (!$query->($row->{title})) {
+                    if (!$query->(
+                        join("|", grep {defined} ($row->{title}, $row->{kde_activity_guid}, $row->{kde_activity_name}))
+                    )) {
                         $match = 0; goto L1;
                     }
                 }
@@ -128,16 +179,6 @@ sub list_xwm_windows {
                 }
             } # QUERY
         } # FILTER
-
-      GET_KDE_ACTIVITY: {
-            last unless $with_kde_activity;
-            my $res_get_act = get_xwm_window_kde_activity(id => $row->{id});
-            if ($res_get_act->[0] != 200) {
-                log_warn "Can't get KDE activity for window id %s: %d - %s", $row->{id}, $res_get_act->[0], $res_get_act->[1];
-                last;
-            }
-            $row->{kde_activity} = $res_get_act->[2];
-        }
 
         push @rows, $row;
     } # for line
