@@ -10,7 +10,7 @@ use warnings;
 # VERSION
 
 1;
-# ABSTRACT:
+# ABSTRACT: Utilities related to "X Window Manager"
 
 =head1 SYNOPSIS
 
